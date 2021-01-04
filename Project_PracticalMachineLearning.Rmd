@@ -1,0 +1,175 @@
+---
+title: "Prediction of Exercise"
+author: "Takuya Wakayama"
+date: "1/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Summary of This Prediction
+
+The goal of this project is to predict the manner in which the participants did. 
+
+### Data
+
+The data for this project come from this source:
+<http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har>
+
+#### Activities
+
+In this work, the participants were asked to perform 10 repetitions of activities in 5 different manners:
+
+1. _Class A_: exactly according to the specification
+2. _Class B_: throwing the elbows to the front
+3. _Class C_: lifting the dumbbell only halfway
+4. _Class D_: lowering the dumbbell only halfway
+5. _Class E_: throwing the hips to the front 
+
+The goal of this projection is to estimate which activity the participants were asked to perform from the other variables in the data set.
+
+### Loading Data
+
+#### Train Data
+
+```{r}
+path <- getwd()
+fileURL1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(fileURL1,file.path(path,"training.csv"))
+train <- read.csv(file.path(path,"training.csv"))
+```
+
+#### Testing Data
+```{r}
+fileURL2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileURL2, file.path(path,"testing.csv"))
+validation <- read.csv(file.path(path,"testing.csv"))
+```
+
+### Variable Selection
+
+I will select variables to perform better prediction.
+
+#### Blank or NAs
+
+There are several variables that contain NA's. The variable names prefixed with "kurtosis_", "skewness_", "max_", "min_", "amplitude_", "var_", "avg_", and "stddev_".
+
+```{r}
+trainClean <- train[,-grep("^kurtosis_|^skewness_|^max_|^min_|^amplitude_|^var_|^avg_|^stddev_",colnames(train))]
+validationClean <- validation[, -grep("^kurtosis_|^skewness_|^max_|^min_|^amplitude_|^var_|^avg_|^stddev_", colnames(validation))]
+```
+
+#### Timestamps
+
+Lots of observations were recorded at the same time, and the timing has nothing to do with the movement. So I will omit timestamps.
+
+```{r}
+trainClean <- trainClean[,-grep("raw_timestamp_part_1|raw_timestamp_part_2|cvtd_timestamp",colnames(trainClean))]
+validationClean <- validationClean[,-grep("raw_timestamp_part_1|raw_timestamp_part_2|cvtd_timestamp",colnames(validationClean))]
+```
+
+#### Row index
+
+Also there is a unnamed variable for row index in each data set, which should be omitted.
+
+```{r}
+trainClean <- trainClean[,2:57]
+validationClean <- validationClean[,2:57]
+```
+
+### Data Preparation
+
+The target variable _classe_ is of character class.
+
+```{r}
+str(trainClean$classe)
+```
+
+I convert the class to factor.
+
+```{r}
+trainClean$classe <- factor(trainClean$classe)
+```
+
+### Dividing the Train Data
+
+Before the final validation, I will separate the train data into training and testing sets.
+
+```{r}
+library(caret)
+inTrain <- createDataPartition(y = trainClean$classe,
+                               p = 0.7, list = FALSE)
+training <- trainClean[inTrain,]
+testing <- trainClean[-inTrain,]
+```
+
+#### Configure parallel processing for the computation
+
+```{r}
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv", number = 5, allowParallel = TRUE) #Configure trainControl object
+```
+
+### Building Models
+
+Below I will build some models on the training set.
+
+```{r}
+## Decision Tree
+modRpart <- train(classe ~ ., data = training, 
+                  method = "rpart")
+## Random forest
+modRf <- train(classe ~ ., data = training, 
+               method = "rf", trControl = fitControl)
+## Boosting
+modGbm <- train(classe ~ ., data = training,
+                method = "gbm", verbose = FALSE,
+                trControl = fitControl)
+
+## De-register parallel processing cluster
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+### Selecting Model for Validation
+
+#### Decision Tree
+
+```{r}
+predRpart <- predict(modRpart, testing)
+confusionMatrix(predRpart, testing$classe)
+```
+
+With regression trees, we can predict _classe_ with 0.521 accuracy
+
+#### Random Forest
+
+```{r}
+predRf <- predict(modRf, testing)
+confusionMatrix(predRf, testing$classe)
+```
+
+Random Forest can predict _classe_ almost perfectly, with 95% Confidence Interval between 0.999 to 1.
+
+#### Boosting
+
+```{r}
+predGbm <- predict(modGbm, testing)
+confusionMatrix(predGbm, testing$classe)
+```
+
+Boosting also performs well with the accuracy 0.9867, slightly lower than Random Forest.
+
+### Prediction on Validation Set
+
+```{r,results='hide'}
+# results are hided
+RfV <- predict(modRf, newdata = validationClean)
+```
+
+
